@@ -1,65 +1,72 @@
 import numpy as np
+import random
 
+random.seed(42)
 np.random.seed(42)
-true_center = (5, 5)
-true_radius = 3
-num_points = 50
-noise = 0.5
+num_jobs = 10
+num_machines = 3
+job_times = [random.randint(2, 15) for _ in range(num_jobs)]
 
-angles = np.linspace(0, 2*np.pi, num_points)
-points = np.array([
-    true_center[0] + true_radius * np.cos(angles) + np.random.randn(num_points)*noise,
-    true_center[1] + true_radius * np.sin(angles) + np.random.randn(num_points)*noise
-]).T
+print("Job times:", job_times)
 
 
-def fitness(circle_params, points):
-    a, b, R = circle_params
-    distances = np.sqrt((points[:,0]-a)**2 + (points[:,1]-b)**2)
-    return np.sum((distances - R)**2)
+num_particles = 40
+max_iter = 200
+w = 0.7
+c1 = 1.4
+c2 = 1.4
+def schedule_from_position(pos):
+    sched = np.rint(pos).astype(int)
+    sched = np.clip(sched, 0, num_machines-1)
+    return sched
 
-num_particles = 30
-num_iterations = 100
-w = 0.5
-c1 = 1
-c2 = 1
+def fitness(schedule):
+    loads = [0] * num_machines
+    for job, machine in enumerate(schedule):
+        loads[machine] += job_times[job]
+    return max(loads)
 
-x_min, x_max = points[:,0].min()-5, points[:,0].max()+5
-y_min, y_max = points[:,1].min()-5, points[:,1].max()+5
-r_min, r_max = 1, 20
+positions = np.random.uniform(0, num_machines-1, size=(num_particles, num_jobs))
+velocities = np.random.uniform(-1, 1, size=(num_particles, num_jobs)) * 0.1
 
-particles = np.random.rand(num_particles, 3)
-particles[:,0] = x_min + particles[:,0]*(x_max - x_min)
-particles[:,1] = y_min + particles[:,1]*(y_max - y_min)
-particles[:,2] = r_min + particles[:,2]*(r_max - r_min)
+pbest_pos = positions.copy()
+pbest_schedule = np.array([schedule_from_position(p) for p in pbest_pos])
+pbest_fitness = np.array([fitness(s) for s in pbest_schedule])
 
-velocities = np.random.rand(num_particles, 3)*0.5 - 0.25
+gbest_idx = int(np.argmin(pbest_fitness))
+gbest_pos = pbest_pos[gbest_idx].copy()
+gbest_schedule = pbest_schedule[gbest_idx].copy()
+gbest_value = float(pbest_fitness[gbest_idx])
 
-pbest = particles.copy()
-pbest_fitness = np.array([fitness(p, points) for p in particles])
-
-gbest_idx = np.argmin(pbest_fitness)
-gbest = pbest[gbest_idx].copy()
-gbest_fit = pbest_fitness[gbest_idx]
-
-for t in range(num_iterations):
+for it in range(max_iter):
     for i in range(num_particles):
-        r1, r2 = np.random.rand(2)
-        velocities[i] = (w*velocities[i] 
-                         + c1*r1*(pbest[i]-particles[i]) 
-                         + c2*r2*(gbest - particles[i]))
-        particles[i] += velocities[i]
-        if particles[i,2] < 0.1:
-            particles[i,2] = 0.1
-        f = fitness(particles[i], points)
-        if f < pbest_fitness[i]:
-            pbest[i] = particles[i].copy()
-            pbest_fitness[i] = f
-            if f < gbest_fit:
-                gbest = particles[i].copy()
-                gbest_fit = f
+        r1 = np.random.rand(num_jobs)
+        r2 = np.random.rand(num_jobs)
 
+        velocities[i] = (w * velocities[i]
+                         + c1 * r1 * (pbest_pos[i] - positions[i])
+                         + c2 * r2 * (gbest_pos - positions[i]))
+        positions[i] = positions[i] + velocities[i]
 
-print("Estimated center: ({:.3f}, {:.3f})".format(gbest[0], gbest[1]))
-print("Estimated radius: {:.3f}".format(gbest[2]))
-print("Error in center: ({:.3f}, {:.3f})".format(gbest[0]-true_center[0], gbest[1]-true_center[1]))
+        positions[i] = np.clip(positions[i], 0.0, float(num_machines - 1))
+
+        sched = schedule_from_position(positions[i])
+        fit = fitness(sched)
+
+        if fit < pbest_fitness[i]:
+            pbest_fitness[i] = fit
+            pbest_pos[i] = positions[i].copy()
+            pbest_schedule[i] = sched.copy()
+
+            if fit < gbest_value:
+                gbest_value = fit
+                gbest_pos = positions[i].copy()
+                gbest_schedule = sched.copy()
+
+print("\nBest schedule (machine assignment per job):", gbest_schedule.tolist())
+for m in range(num_machines):
+    jobs_on_m = [j for j in range(num_jobs) if gbest_schedule[j] == m]
+    load = sum(job_times[j] for j in jobs_on_m)
+    print(f"Machine {m}: jobs {jobs_on_m}, load = {load}")
+
+print("Final makespan:", gbest_value)
